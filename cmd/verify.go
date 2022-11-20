@@ -3,15 +3,15 @@
 package cmd
 
 import (
-	"os"
-  "context"
-  "fmt"
+	"context"
+	"fmt"
 
 	apex "github.com/apex/log"
+	"github.com/google/go-containerregistry/pkg/name"
 
-	"github.com/chaosinthecrd/mandark/pkg/config"
-	"github.com/chaosinthecrd/mandark/pkg/files"
 	"github.com/chaosinthecrd/mandark/internal/log"
+	"github.com/chaosinthecrd/mandark/pkg/config"
+	p "github.com/chaosinthecrd/mandark/pkg/policy"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ var verifyCmd = &cobra.Command{
 	Short: "Verify the provided image refereneces in the image file meet the policy defined in the policy file.",
 	RunE: func(cmd *cobra.Command, args []string) error {
            ctx := log.InitLogContext(DebugMode)
-           if err := verify(ctx); err != nil {
+           if err := verify(ctx, args); err != nil {
               logs := apex.FromContext(ctx)
               logs.Error("command 'verify' failed. Closing.")
            }
@@ -33,7 +33,7 @@ func init() {
 	rootCmd.AddCommand(verifyCmd)
 }
 
-func manipulate(ctx context.Context) error {
+func verify(ctx context.Context, args []string) error {
 
           logs :=  apex.FromContext(ctx)
 
@@ -45,20 +45,49 @@ func manipulate(ctx context.Context) error {
 
           var err error
 
-          logs = log.AddFields(logs, "verify")
+          logs = log.AddFields(logs, "verify", PolicyFile, ImageFile)
 
           logs.Debugf("Verifying image references defined in %s against policy defined in %s", ImageFile, PolicyFile)
 
-
-          images, err := config.InitialiseImageFile(ImageFile)
+          policy, err := config.InitialisePolicy(PolicyFile)
           if err != nil {
-             logs.Errorf("Failed to initialise mandark image file: %s", err.Error())
-             return err
+            logs.Errorf("Failed to initialise policy file: %s", err.Error())
           }
 
+          fmt.Println(policy)
 
-          defer fmt.Printf("had image references that were manipulated:\n")
-          defer fmt.Printf("\n")
+          images := config.Images{}
+          if ImageFile != "" {
+            images, err = config.InitialiseImages(ImageFile)
+            if err != nil {
+               logs.Errorf("Failed to initialise mandark image file: %s", err.Error())
+               return err
+            }
+          } else {
+            if len(args) == 0 {
+              logs.Errorf("Either an image file or image reference argument(s) must be specified")
+              return nil
+            }
+            for _, n := range(args) {
+              ref, err := name.ParseReference(n)
+              if err != nil {
+                logs.Errorf("Failed to parse string %s as image reference: %s", err.Error())
+              }
+              images.ImageReferences = append(images.ImageReferences, ref)
+
+            }
+          }
+
+          results, errs := p.VerifyImages(policy, images)
+          if errs != nil {
+            logs.Errorf("Failed to verify images:")
+            for _, n := range(errs) {
+              logs.Errorf("%s", n)
+            }
+            return nil
+          }
+
+          fmt.Printf("Results %v", results)
 
           return nil
 }

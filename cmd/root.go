@@ -34,6 +34,6 @@ func init() {
       // TODO: Implement output mode
       // rootCmd.PersistentFlags().StringVarP(&OutputMode, "output", "o", "pretty", "Output mode. Supported modes: "+strings.Join(output.Modes, ", "))
       rootCmd.PersistentFlags().StringVarP(&ImageFile, "image-reference-file", "i", "", "JSON file containing image references to be assessed against policy. Can be generated using Dexter.")
-      rootCmd.PersistentFlags().StringVarP(&PolicyFile, "policy-file", "p", "policy.rego", "Policy file (rego or cue) that is used to assess image references with the chosen policy engine.")
+      rootCmd.PersistentFlags().StringVarP(&PolicyFile, "policy-file", "p", "policy.yaml", "Policy file (rego or cue) that is used to assess image references with the chosen policy engine.")
       rootCmd.PersistentFlags().BoolVar(&DebugMode, "debug", false, "Increase the verbosity of logs with debug mode")
 }

@@ -36,8 +36,8 @@ func AddFields(logger log.Interface, command, directory, config string) (*log.En
 
     entry := logger.WithFields(log.Fields{
         "command":   command,
-        "directory": directory,
-        "configFile": config,
+        "policyFile": directory,
+        "imageFile": config,
     })
 
     return entry

@@ -1,9 +1,14 @@
 package config
 
 import (
-  "gopkg.in/yaml.v3"
+	"fmt"
 	"os"
-  "github.com/google/go-containerregistry/name"
+	"knative.dev/pkg/apis"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	webhookpolicy "github.com/sigstore/policy-controller/pkg/webhook/clusterimagepolicy"
+  policyv1alpha1 "github.com/sigstore/policy-controller/pkg/apis/policy/v1alpha1"
+	"gopkg.in/yaml.v3"
 )
 
 type Images struct {
@@ -24,8 +29,38 @@ func InitialiseImages(imageFile string) (Images, error) {
          return Images{}, err
       }
 
+   } else {
+     return Images{}, fmt.Errorf("Image file not specified.")
    }
 
    return config, nil
+}
+
+func InitialisePolicy(policyFile string) (webhookpolicy.ClusterImagePolicy, error) {
+
+  cip := webhookpolicy.ClusterImagePolicy{}
+  if policyFile != "" {
+    file, err := os.ReadFile(policyFile)
+    if err != nil {
+      return cip, err
+    }
+
+    _, err = apis.ParseURL("https://fulcio.sigstore.dev")
+    if err != nil {
+      fmt.Println(err.Error())
+      panic(err)
+    }
+
+    ocip := policyv1alpha1.ClusterImagePolicy{}
+    err = yaml.Unmarshal(file, &ocip)
+    if err != nil {
+      return cip, err
+    }
+    
+    cip = *webhookpolicy.ConvertClusterImagePolicyV1alpha1ToWebhook(&ocip)
+  }
+
+  return cip, nil
+
 }
 

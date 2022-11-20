@@ -1,0 +1,18 @@
+apiVersion: policy.sigstore.dev/v1alpha1
+kind: ClusterImagePolicy
+metadata:
+  name: image-is-signed-by-github-actions
+spec:
+  images:
+  # All images in example repository matched
+  - glob: "**"
+  authorities:
+  - keyless:
+      # Signed by the public Fulcio certificate authority
+      url: "https://fulcio.sigstore.dev"
+      identities:
+      # Matches the Github Actions OIDC issuer
+      - issuer: https://token.actions.githubusercontent.com
+        # Matches a specific github workflow on main branch. Here we use the
+        # sigstore policy controller example testing workflow as an example.
+        subject: "https://github.com/sigstore/policy-controller/.github/workflows/policy-tester-examples.yml@refs/heads/main"
