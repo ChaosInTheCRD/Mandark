@@ -4,7 +4,7 @@ package cmd
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 
 	apex "github.com/apex/log"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -49,12 +49,12 @@ func verify(ctx context.Context, args []string) error {
 
           logs.Debugf("Verifying image references defined in %s against policy defined in %s", ImageFile, PolicyFile)
 
-          policy, err := config.InitialisePolicy(PolicyFile)
+          policy, err := config.InitialisePolicy(ctx, PolicyFile)
           if err != nil {
             logs.Errorf("Failed to initialise policy file: %s", err.Error())
-          }
+          }  
 
-          fmt.Println(policy)
+          logs.Debugf("Policy is %s", policy)
 
           images := config.Images{}
           if ImageFile != "" {
@@ -70,24 +70,30 @@ func verify(ctx context.Context, args []string) error {
             }
             for _, n := range(args) {
               ref, err := name.ParseReference(n)
+              logs.Infof("ref: %s", ref)
               if err != nil {
                 logs.Errorf("Failed to parse string %s as image reference: %s", err.Error())
               }
-              images.ImageReferences = append(images.ImageReferences, ref)
+              images.ImageReferences = append(images.ImageReferences, n)
 
             }
           }
 
-          results, errs := p.VerifyImages(policy, images)
+          results, errs := p.VerifyImages(ctx, policy, images)
           if errs != nil {
             logs.Errorf("Failed to verify images:")
-            for _, n := range(errs) {
-              logs.Errorf("%s", n)
+            errsBytes, err := json.Marshal(errs)
+            if err != nil {
+              logs.Errorf("Failed to marshal errors to json: %s", err.Error())
             }
-            return nil
+            logs.Errorf("%s", errsBytes)
           }
 
-          fmt.Printf("Results %v", results)
+          resultsBytes, err := json.Marshal(results)
+          if err != nil {
+            logs.Errorf("Failed to marshal results to json: %s", err.Error())
+          }
+          logs.Infof("Results: %s", resultsBytes)
 
           return nil
 }

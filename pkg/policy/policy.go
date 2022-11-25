@@ -2,154 +2,97 @@ package policy
 
 import (
 	"context"
-	"fmt"
-	"sync"
   "errors"
-  "encoding/json"
+  "strings"
 
 	"github.com/chaosinthecrd/mandark/pkg/config"
 	"github.com/google/go-containerregistry/pkg/name"
-	sigstorewebhook "github.com/sigstore/policy-controller/pkg/webhook"
-	sigstorepolicy "github.com/sigstore/policy-controller/pkg/webhook/clusterimagepolicy"
-  "github.com/sigstore/cosign/pkg/cosign"
-  "github.com/sigstore/cosign/pkg/policy"
+  "github.com/sigstore/policy-controller/pkg/webhook"
+  "github.com/sigstore/policy-controller/pkg/apis/glob"
+	webhookv1alpha1 "github.com/sigstore/policy-controller/pkg/webhook/clusterimagepolicy"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	ociremote "github.com/sigstore/cosign/pkg/oci/remote"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"knative.dev/pkg/apis"
+
 )
 
 
-func VerifyImages(cip sigstorepolicy.ClusterImagePolicy, refs config.Images) (*[]sigstorewebhook.PolicyResult, []error) {
+func VerifyImages(ctx context.Context, cip webhookv1alpha1.ClusterImagePolicy, refs config.Images) (*[]webhook.PolicyResult, []OutputErr) {
 
-  ctx := context.TODO()
-
-  results := []sigstorewebhook.PolicyResult{}
+  var (
+    results = []webhook.PolicyResult{}
+    ns = "unused"
+    outputErrs = []OutputErr{}
+    remoteOpts = []ociremote.Option{
+      ociremote.WithRemoteOptions(
+        remote.WithAuthFromKeychain(authn.DefaultKeychain),
+      ),
+    }
+  )
 
   for _, n := range(refs.ImageReferences) {
-    result, err := ValidatePolicy(ctx, n, cip)
-    if err != nil {
-      panic(err)
-      return &results, err
+    // Don't need to check for errors as image have already been validated
+    ref, _ := name.ParseReference(n)
+    result, errs := webhook.ValidatePolicy(ctx, ns, ref, cip, remoteOpts...)
+
+    if errs != nil {
+    outputErrs = append(outputErrs, FormatOutputErrors(ref, errs))
     }
 
-    fmt.Printf("Result: %v", result)
-    results = append(results, *result)
+    if result != nil {
+      results = append(results, *result)
+    }
   }
 
-  fmt.Printf("Result: %v", results)
-  return &results, nil
+    return &results, outputErrs
+}
+
+func ValidatePolicy(ctx context.Context, image string, cip webhookv1alpha1.ClusterImagePolicy) (webhook.PolicyResult, []error) {
+  return webhook.PolicyResult{}, []error{};
 }
 
 
-func ValidatePolicy(ctx context.Context, ref name.Reference, cip sigstorepolicy.ClusterImagePolicy) (*sigstorewebhook.PolicyResult, []error) {
+func MatchImageGlob(image string, cip webhookv1alpha1.ClusterImagePolicy) (bool, error) {
 
-	// Each gofunc creates and puts one of these into a results channel.
-	// Once each gofunc finishes, we go through the channel and pull out
-	// the results.
-	type retChannelType struct {
-		name         string
-		static       bool
-		attestations map[string][]sigstorewebhook.PolicyAttestation
-		signatures   []sigstorewebhook.PolicySignature
-		err          error
-	}
-	wg := new(sync.WaitGroup)
+	matches := false
 
-	results := make(chan retChannelType, len(cip.Authorities))
-	for _, authority := range cip.Authorities {
-
-		authority := authority // due to gofunc
-		// logs.Debugf("Checking Authority: %s", authority.Name)
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			result := retChannelType{name: authority.Name}
-
-			switch {
-			case authority.Static != nil:
-				if authority.Static.Action == "fail" {
-					result.err = cosign.NewVerificationError("disallowed by static policy")
-					results <- result
-					return
-				}
-				result.static = true
-
-			case len(authority.Attestations) > 0:
-				// We're doing the verify-attestations path, so validate (.att)
-				result.attestations, result.err = sigstorewebhook.ValidatePolicyAttestationsForAuthority(ctx, ref, authority)
-
-			default:
-				result.signatures, result.err = sigstorewebhook.ValidatePolicySignaturesForAuthority(ctx, ref, authority)
-			}
-			results <- result
-		}()
-	}
-
-	// If none of the Authorities for a given policy pass the checks, gather
-	// the errors here. Even if there are errors, return the matched
-	// authoritypolicies.
-	authorityErrors := make([]error, 0, len(cip.Authorities))
-	// We collect all the successfully satisfied Authorities into this and
-	// return it.
-	policyResult := &sigstorewebhook.PolicyResult{
-		AuthorityMatches: make(map[string]sigstorewebhook.AuthorityMatch, len(cip.Authorities)),
-	}
-	for range cip.Authorities {
-		select {
-		case <-ctx.Done():
-			authorityErrors = append(authorityErrors, fmt.Errorf("%w before validation completed", ctx.Err()))
-
-		case result, ok := <-results:
-			if !ok {
-				authorityErrors = append(authorityErrors, errors.New("results channel closed before all results were sent"))
-				continue
-			}
-			switch {
-			case result.err != nil:
-				// We only wrap actual policy failures as FieldErrors with the
-				// possibly Warn level. Other things imho should be still
-				// be considered errors.
-				authorityErrors = append(authorityErrors, result.err)
-
-			case len(result.signatures) > 0:
-				policyResult.AuthorityMatches[result.name] = sigstorewebhook.AuthorityMatch{Signatures: result.signatures}
-
-			case len(result.attestations) > 0:
-				policyResult.AuthorityMatches[result.name] = sigstorewebhook.AuthorityMatch{Attestations: result.attestations}
-
-			case result.static:
-				// This happens when we encounter a policy with:
-				//   static:
-				//     action: "pass"
-				policyResult.AuthorityMatches[result.name] = sigstorewebhook.AuthorityMatch{
-					Static: true,
-				}
-
-			default:
-				authorityErrors = append(authorityErrors, fmt.Errorf("failed to process authority: %s", result.name))
+	for _, pattern := range cip.Images {
+		if pattern.Glob != "" {
+			if matched, err := glob.Match(pattern.Glob, image); err != nil {
+        continue
+			} else if matched { 
+				matches = true
 			}
 		}
 	}
-	wg.Wait()
-	// Even if there are errors, return the policies, since as per the
-	// spec, we just need one authority to pass checks. If more than
-	// one are required, that is enforced at the CIP policy level.
-	// If however there are no authorityMatches, return nil so we don't have
-	// to keep checking the length on the returned calls.
-	if len(policyResult.AuthorityMatches) == 0 {
-		return nil, authorityErrors
-	}
-	// Ok, there's at least one valid authority that matched. If there's a CIP
-	// level policy, validate it here before returning.
-	if cip.Policy != nil {
-		// logging.FromContext(ctx).Info("Validating CIP level policy")
-		policyJSON, err := json.Marshal(policyResult)
-		if err != nil {
-			return nil, append(authorityErrors, err)
-		}
-		err = policy.EvaluatePolicyAgainstJSON(ctx, "ClusterImagePolicy", cip.Policy.Type, cip.Policy.Data, policyJSON)
-		if err != nil {
-			// logging.FromContext(ctx).Warnf("Failed to validate CIP level policy against %s", string(policyJSON))
-			return nil, append(authorityErrors, err)
-		}
-	}
-	return policyResult, authorityErrors
+
+  return matches, nil
+}
+
+func FormatOutputErrors(image name.Reference, errs []error) (OutputErr) {
+
+    outputErr := OutputErr{}
+
+    for _, err := range errs {
+      var fe *apis.FieldError
+      if errors.As(err, &fe) {
+        if warnFE := fe.Filter(apis.WarningLevel); warnFE != nil {
+          outputErr.Warnings = append(outputErr.Warnings, strings.Trim(warnFE.Error(), "\n"))
+        }
+        if errorFE := fe.Filter(apis.ErrorLevel); errorFE != nil {
+          outputErr.Errors = append(outputErr.Errors, strings.Trim(errorFE.Error(), "\n"))
+        }
+      } else {
+        outputErr.Other = append(outputErr.Other, strings.Trim(err.Error(), "\n"))
+      }
+    }
+    
+    return outputErr
+}
+
+type OutputErr struct {
+  Errors []string `json:"errors"`
+  Warnings []string `json:"warnings"`
+  Other []string `json:"other"`
 }
