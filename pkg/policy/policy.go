@@ -13,7 +13,9 @@ import (
 	"github.com/sigstore/policy-controller/pkg/apis/glob"
 	"github.com/sigstore/policy-controller/pkg/webhook"
 	webhookv1alpha1 "github.com/sigstore/policy-controller/pkg/webhook/clusterimagepolicy"
+	"go.uber.org/zap"
 	"knative.dev/pkg/apis"
+	"knative.dev/pkg/logging"
 )
 
 func VerifyImages(ctx context.Context, cip webhookv1alpha1.ClusterImagePolicy, refs config.Images) (*[]webhook.PolicyResult, []OutputErr) {
@@ -31,6 +33,7 @@ func VerifyImages(ctx context.Context, cip webhookv1alpha1.ClusterImagePolicy, r
 	for _, n := range refs.ImageReferences {
 		// Don't need to check for errors as image has already been validated
 		ref, _ := name.ParseReference(n)
+		ctx := logging.WithLogger(context.Background(), zap.NewNop().Sugar())
 		result, errs := webhook.ValidatePolicy(ctx, ns, ref, cip, remoteOpts...)
 
 		if errs != nil {
