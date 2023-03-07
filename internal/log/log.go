@@ -2,7 +2,6 @@ package log
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/apex/log"
@@ -10,8 +9,6 @@ import (
 	"github.com/apex/log/handlers/cli"
 	"github.com/chaosinthecrd/mandark/pkg/policy"
 )
-
-type logKey struct{}
 
 func InitLogContext(debug bool) context.Context {
 	var level log.Level
